@@ -1,0 +1,158 @@
+---
+title: "fit_cip_measurement_error"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(brms)
+library(bayestestR)
+
+```
+
+# Introduction
+
+This document will fit the Bayesian model.
+
+Load dataframe (available at request via NERC open access)
+
+Perform the following cleaning:
+o	Removal of zero plain counts
+o	Scale and centre numerical variables EXCEPT plain_undiluted
+o	Selected only relevant antibiotic usage variables
+o	Remove variables with too few or too many levels
+o	Make the dependent variable an integer
+
+# Sensitivity
+
+This is the formula we will use to determine sensitivity
+
+k= plain count
+q= min prevalence we wish to detect
+
+$$
+s = 1-(1-q)^k
+$$
+
+## Create sensitivity and specificity columns
+
+```{r}
+
+#specify min prevalence
+q=0.01 #  ie min prevalence of 1%
+
+df <- mutate(df, fnr=(1-q)^plain_undiluted, 
+                sens = 1-fnr,
+             spec=1)%>%
+  dplyr::select(-fnr)
+
+
+```
+
+
+
+
+# Bayesian lasso
+
+```{r}
+
+# Label variables into different categories and sort within df
+main_vars <- c('total_mg_pcu', 'ceph_3_4', 'fq', 'novobiocin', 's_temp')
+re <- 'farm'
+dv <- 'cipR'
+all_named_vars <- c(dv, re, main_vars)
+
+df <- dplyr::select(df, all_named_vars, dplyr::everything())
+
+# Make a formula
+names_classes <- sapply(names(df), function(x) class(df[[x]]))
+```
+
+Reference used for the following:
+
+Carvalho CM, Polson NG, Scott JG, The horseshoe estimator for sparse signals, Biometrika, 2010; 97:465-480
+
+
+```{r}
+# Make formula for regularised variables
+horse_form <- ""
+for (i in 1:length(names_classes)){
+  x <- names(names_classes)[i]
+  # don't add random effects, dependent variables, the main testing variables or plain count. 
+  if (!x %in% c(re, dv, main_vars, "plain_undiluted", "sens", "spec")){
+    if ('ordered' %in% names_classes[x][[1]]){
+      
+      horse_form <- paste(horse_form, sprintf('%s', x), sep='+')
+    }else{
+      horse_form <- paste(horse_form, sprintf('%s', x), sep='+')
+    }    
+  }
+}
+horse_form <- substring(horse_form, 2)
+```
+
+## Fit model
+### Temp included as measurement error using me function and scaled standard deviation of monthly average temperatures
+
+https://discourse.mc-stan.org/t/horseshoe-prior-on-subset-of-predictors/8140/4
+
+```{r}
+
+# Write out the full formula
+
+form <- bf(cipR ~ (sens + spec - 1)/(1+exp(-eta)) + (1-spec),
+          nl=TRUE)
+form <- form + nlf(eta ~ main + reg + rand)
+form <- form + lf(main ~ total_mg_pcu+ceph_3_4+fq+novobiocin+me(s_temp, 0.61), cmc=F)
+form <- form + lf(rand ~ 0 + (1|farm), cmc=F, center = F)
+form <- form + lf(paste("reg ~ 0 + ",horse_form), cmc=F)
+
+# find out which priors we need
+
+get_prior(form, data=df, family=bernoulli(link="identity"))
+
+# define the priors for the two groups. 
+
+priors <- c(prior(student_t(3, 0, 10), class="b", nlpar="main", coef='Intercept'),
+            prior(normal(0, 5), class="b", nlpar="main"),
+            prior(horseshoe(1), class="b", nlpar="reg"))
+
+
+#Run model
+bmod2 <- brm(formula = form,
+            data=df,
+            family=bernoulli(link="identity"),
+            prior=priors,
+            warmup = 1000, iter = 10000, thin=2, chains = 4, seed=42, cores=4, control = list(adapt_delta = 0.98))
+#summary(bmod2)
+
+```
+
+# Skeptical priors
+
+Rerun with skeptical priors on the main variables
+- we don't expect antibiotics or temp to be protective so set this as the mean for the main vars
+
+
+```{r}
+
+# define the priors for the two groups. 
+
+priors <- c(prior(student_t(3, 0, 10), class="b", nlpar="main", coef='Intercept'),
+            prior(normal(-0.5, 2), class="b", nlpar="main"), ## skeptical prior with mean suggestive of antibiotics/ temp having a protective effect i.e. what we don't expect, plus a narrow sd
+            prior(horseshoe(1), class="b", nlpar="reg"))
+
+
+#Run model
+bmod3 <- brm(formula = form,
+            data=df,
+            family=bernoulli(link="identity"),
+            prior=priors,
+            warmup = 1000, iter = 10000, thin=2, chains = 4, seed=42, cores=4, control = list(adapt_delta = 0.98))
+```
+

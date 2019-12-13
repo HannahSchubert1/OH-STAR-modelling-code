@@ -1,0 +1,170 @@
+---
+title: "Cipro pw Bayes"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+```
+
+# Introduction
+
+This document will go through the process of fitting a Bayesian lasso model
+
+Load dataframe (available at request via NERC open access)
+
+Perform the following cleaning:
+o	Removal of zero plain counts
+o	Scale and centre numerical variables
+o	Selected only relevant antibiotic usage variables
+o	Remove variables with too few or too many levels
+o	Make the dependent variable an integer
+
+# Bayesian lasso
+
+```{r}
+# Make a copy of the dataframe
+df <- data.frame(df)
+
+# Label variable categories
+main_vars <- c('total_mg_pcu', 'ceph_3_4', 'fq', 'novobiocin')
+re <- 'farm'
+dv <- 'cipR'
+all_named_vars <- c(dv, re, main_vars)
+
+# sort variables for ease
+df <- dplyr::select(df, all_named_vars, dplyr::everything())
+
+
+# Make a formula
+names_classes <- sapply(names(df), function(x) class(df[[x]]))
+```
+
+
+Reference used for the following:
+
+Carvalho CM, Polson NG, Scott JG, The horseshoe estimator for sparse signals, Biometrika, 2010; 97:465-480
+
+```{r}
+# Make formula for horseshoe variables
+horse_form <- ""
+for (i in 1:length(names_classes)){
+  x <- names(names_classes)[i]
+  # don't add random effects, dependent variables or the main testing variables. 
+  if (!x %in% c(re, dv, main_vars)){
+    if ('ordered' %in% names_classes[x][[1]]){
+      
+      horse_form <- paste(horse_form, sprintf('%s', x), sep='+')
+    }else{
+      horse_form <- paste(horse_form, sprintf('%s', x), sep='+')
+    }    
+  }
+}
+horse_form <- substring(horse_form, 2)
+
+horse_form
+
+```
+
+## Fit model
+
+```{r}
+library(brms)
+
+# This follows the example https://discourse.mc-stan.org/t/horseshoe-prior-on-subset-of-predictors/8140/4
+# Write a maximally explicit formula: dependent_var ~ main_vars + regularized_vars + random effect
+
+form <- bf(cipR ~  main + reg + rand, nl=T)
+form <- form + lf(rand ~ 0 + (1|farm), cmc=F, center=F)
+form <- form + lf("main ~ total_mg_pcu+ceph_3_4+fq+novobiocin",cmc=F)
+form <- form + lf(paste("reg ~ 0 + ",horse_form), cmc=F)
+# form <- form + lf(inter ~ 1, center=T)
+print
+
+# Check which priors we need
+get_prior(form, data=df, family=bernoulli)
+
+# define the priors
+priors <- c(prior(student_t(3, 0, 10), class="b", nlpar="main", coef='Intercept'),
+            prior(normal(0, 5), class="b", nlpar="main"),
+            prior(horseshoe(1), class="b", nlpar="reg"))
+
+# Run model
+bmod <- brm(formula = form,
+            data=df,
+            family=bernoulli,
+            prior=priors,
+            warmup = 1000, iter = 2000, chains = 4, seed=42, cores=4, control = list(adapt_delta = 0.98))
+
+```
+
+```{r}
+library(bayestestR)
+
+# create a dataframe of model output
+
+mod_df <- function(mod){
+
+# coefficients
+fix_df <- data.frame(fixef(mod))
+fix_df$term <- row.names(fix_df)
+
+# Effective sample size
+tmp <- effective_sample(mod)%>%
+  mutate(Parameter=str_remove(Parameter, "b_"))%>%
+  dplyr::rename(term=Parameter, Eff.sample_size=ESS)%>%
+  filter(!term=="main_intercept")
+
+# merge
+fix_df <- right_join(fix_df, tmp, by=c("term"))
+
+# tidy up
+fix_df <- fix_df %>%
+  dplyr::select(term, everything(), -Est.Error) %>%
+  arrange(desc(abs(Estimate))) %>%
+  filter(!grepl('Intercept', term)) %>%
+  mutate_at(vars(-term, -Eff.sample_size), exp)%>%
+  dplyr::rename(Variable=term, OR=Estimate, Lwr_CI=Q2.5, Upr_CI=Q97.5)%>%
+  mutate(sig=if_else((Lwr_CI>1&Upr_CI>1)|(Lwr_CI<1&Upr_CI<1), 1, 0))
+
+print(fix_df)
+
+}
+
+mod_df(bmod)
+```
+
+# Skeptical priors
+
+Rerun with skeptical priors on the main variables
+- we don't expect antibiotics to be protective so set this as the mean
+
+```{r}
+
+priors <- c(prior(student_t(3, 0, 10), class="b", nlpar="main", coef='Intercept'),
+            prior(normal(-0.5, 2), class="b", nlpar="main"), ## skeptical prior with mean suggestive of antibiotics having a protective effect i.e. what we don't expect
+            prior(horseshoe(1), class="b", nlpar="reg"))
+
+# Run model
+mod_2 <- brm(formula = form,
+            data=df,
+            family=bernoulli,
+            prior=priors,
+            warmup = 1000, iter = 2000, chains = 4, seed=42, cores=4, control = list(adapt_delta = 0.98))
+#summary(mod_2)
+
+
+```
+
+```{r}
+# create df of output as above
+
+mod_df(mod_2)
+```
+

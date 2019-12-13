@@ -1,0 +1,365 @@
+---
+title: "end point for paper"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+rm(list = ls())
+library(tidyverse)
+library(visdat)
+library(readxl)
+
+```
+
+Load data
+Scale numerical variables
+
+# Introduction
+
+This document will go through the process of fitting the individual heifer sample models.
+
+# Functions
+
+```{r include=FALSE}
+# function to create df of model output
+
+mod_output <- function(mod){
+
+m <- as.data.frame(coef(summary(mod)))
+m <- m%>%  mutate(var=rownames(m))
+m <-m%>%  mutate(Estimate=exp(Estimate))%>%
+  dplyr::rename(OR=Estimate,
+                p=`Pr(>|z|)`)
+
+con <- as.data.frame(confint(mod, method="Wald"))[-1,]%>%
+   dplyr:: rename(lwr=`2.5 %`, upr=`97.5 %`)%>%
+   mutate(lwr=exp(lwr), upr=exp(upr))
+
+ summary <- cbind(m, con)%>%
+   dplyr::select(var, OR, lwr, upr, p)%>%
+   mutate(p=round(p, digits=4))%>%
+   arrange(p)%>%
+   filter(!var=="(Intercept)")
+ 
+ print(summary)
+}
+
+
+```
+
+
+# Analysis
+
+Three anlyses will be performed.
+1. Examining the environmental samples over the whole project period
+2. Examining the environmental samples during the last three months
+3. Examining the environmental samples over the whole period for heifers only
+
+Zero plain counts are excluded from the environmental samples before averaging.
+
+Variable selection: performed using prior knowledge and based on the original OH STAR hypothesis.
+Dependent variable= binary resistance
+Random effects= farm
+Fixed effects= 
+* proportion of environmental samples taken from that farm with the type of resistance being tested
+* rectal or cowpat
+* run by EW or KM
+* AMU variables from each farm to include total AMU and antibiotics relevent to the resistance being tested
+
+All variables will be included in the initial model; then a backwards stepwise approach will be taken where the variable with the highest p value is removed on each iteration until only those with p < 0.05 remain.
+
+## Amoxicillin
+
+### All environmental samples
+
+Multivariable logistic regression with variables as described above.
+
+```{r}
+
+library(lme4)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex + code+ run_by + temp_farm+ total_mg_pcu+amox+co_amox+pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex + code+ run_by + temp_farm+ total_mg_pcu+co_amox+pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex + code+ run_by + temp_farm+ co_amox+pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex + code+ run_by + temp_farm+ pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex + code+ run_by + temp_farm+ (1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex + code+ run_by +(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ code+ run_by +(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+```
+
+
+### Last 3m environmental samples
+
+Multivariable logistic regression with variables as described above.
+
+```{r}
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex_3m + code+ run_by + temp_3m+ total_mg_pcu+amox+co_amox+pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex_3m + code+ run_by + temp_3m+ total_mg_pcu+amox+co_amox+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex_3m + code+ run_by + temp_3m+ amox+co_amox+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex_3m + code+ run_by + temp_3m+ co_amox+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex_3m + code+ run_by + temp_3m+ (1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ farm_amoxR_pc_ex_3m + code+ run_by +(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~  code+ run_by +(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+```
+
+### Just heifers (NB last three months wouldn't be enough samples)
+
+```{r}
+mod1 <- glmer(amoxR ~ heif_amoxR_pc_ex + code+ run_by + temp_heif+ total_mg_pcu+amox+co_amox+pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ heif_amoxR_pc_ex + code+ run_by + temp_heif+ total_mg_pcu+co_amox+pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ heif_amoxR_pc_ex + code + run_by +temp_heif+co_amox+pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ heif_amoxR_pc_ex + code + run_by +temp_heif+pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ heif_amoxR_pc_ex + code + run_by +pen+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~ heif_amoxR_pc_ex + code + run_by +(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(amoxR ~  code + run_by +(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+
+```
+
+## Tetracycline
+
+### All environmental samples
+
+Multivariable logistic regression with variables as described above.
+
+```{r}
+
+mod1 <- glmer(tetR ~ farm_tetR_pc_ex + code+ run_by + temp_farm+ total_mg_pcu+tet+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(tetR ~ code+ run_by + temp_farm+ total_mg_pcu+tet+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(tetR ~ code+ run_by + temp_farm+ total_mg_pcu+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(tetR ~ code+ run_by +  total_mg_pcu+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+```
+
+### Last 3m environmental samples
+
+Multivariable logistic regression with variables as described above.
+
+```{r}
+
+mod1 <- glmer(tetR ~ farm_tetR_pc_ex_3m + code+ run_by + temp_3m+ total_mg_pcu+tet+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(tetR ~ farm_tetR_pc_ex_3m + code+ run_by + temp_3m+ tet+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(tetR ~ farm_tetR_pc_ex_3m + code+ run_by + temp_3m+ (1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+ 
+```
+
+### Just heifers
+
+
+```{r}
+
+mod1 <- glmer(tetR ~ heif_tetR_pc_ex + code+ run_by + temp_heif+ total_mg_pcu+tet+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(tetR ~  code+ run_by + temp_heif+ total_mg_pcu+tet+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+
+mod1 <- glmer(tetR ~  code+ run_by +  total_mg_pcu+tet+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+ 
+mod1 <- glmer(tetR ~  code+ run_by +  total_mg_pcu+(1|farm), data=df, family=binomial)
+
+mod_output(mod1)
+ 
+```
+
+## Cefalexin
+
+### All environmental samples
+
+```{r}
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex + code+ run_by + temp_farm+ total_mg_pcu+ceph_1+ceph_3_4+cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex + code+ run_by + temp_farm+ ceph_1+ceph_3_4+cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex + code+ run_by + temp_farm+ ceph_1+ceph_3_4+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex + code+ temp_farm+ ceph_1+ceph_3_4+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex + code+  ceph_1+ceph_3_4+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ code+  ceph_1+ceph_3_4+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ code+  ceph_1+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ code+  (1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+```
+ 
+### Last 3m environmental samples
+
+```{r}
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex_3m + code+ run_by + temp_3m+ total_mg_pcu+ceph_1+ceph_3_4+cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex_3m + code+  temp_3m+ total_mg_pcu+ceph_1+ceph_3_4+cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex_3m + code+  temp_3m+ ceph_1+ceph_3_4+cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex_3m + code+  temp_3m+ ceph_1+cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex_3m + code+  temp_3m+ cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ farm_cephR_pc_ex_3m + code+  temp_3m+ (1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~  code+  temp_3m+ (1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~  code+  (1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+```
+
+### Just heifers
+
+```{r}
+mod3 <- glmer(cephR ~ heif_cephR_pc_ex + code+ run_by + temp_heif+ total_mg_pcu+ceph_1+ceph_3_4+cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ heif_cephR_pc_ex + code+ run_by + temp_heif+ ceph_1+ceph_3_4+cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ heif_cephR_pc_ex + code+ run_by +  ceph_1+ceph_3_4+cefalexin+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ heif_cephR_pc_ex + code+ run_by +  ceph_1+ceph_3_4+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ heif_cephR_pc_ex + code+  ceph_1+ceph_3_4+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ code+  ceph_1+ceph_3_4+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ code+  ceph_1+(1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+
+mod3 <- glmer(cephR ~ code+  (1|farm), data=df, family=binomial)
+
+mod_output(mod3)
+```

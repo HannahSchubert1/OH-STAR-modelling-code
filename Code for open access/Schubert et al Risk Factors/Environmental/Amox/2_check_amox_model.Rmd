@@ -1,0 +1,129 @@
+---
+title: "check amox"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Load models- main model and skeptical prior model
+
+```{r include=FALSE}
+library(tidyverse)
+library(brms)
+library(bayestestR)
+
+```
+
+# Model checking
+
+## Rhat
+
+Check Rhat for all variable and for any model warnings or divergence issues.
+
+```{r}
+
+summary(m1)
+
+```
+
+## Create table for use below
+
+## Tables
+
+Full table plus just sig variables for main model plus skeptical priors
+
+```{r}
+
+models=list(m1, m2)
+names=c("amox_main", "amox_sk_pr")
+
+for (i in 1:length(models)){
+  # df of coefficients
+  fix_df <- data.frame(fixef(models[[i]]))
+  fix_df$term <- row.names(fix_df)
+  # df to include effective sample size
+
+  tmp <- effective_sample(models[[i]])%>%
+    mutate(Parameter=str_remove(Parameter, "b_"))%>%
+    dplyr::rename(term=Parameter, Eff.sample_size=ESS)%>%
+    filter(!term=="main_intercept")
+  # merge and tidy
+
+  fix_df <- left_join(fix_df, tmp, by=c("term"))
+  fix_df <- fix_df %>%
+    dplyr::select(term, everything(), -Est.Error) %>%
+    #arrange(desc(abs(Estimate))) %>%
+    filter(!grepl('Intercept', term)) %>%
+    mutate_at(vars(-term, -Eff.sample_size), exp) %>%
+    dplyr::rename(Variable=term, OR=Estimate, Lwr_CI=Q2.5, Upr_CI=Q97.5) %>%
+    mutate(sig=if_else((Lwr_CI>1&Upr_CI>1)|(Lwr_CI<1&Upr_CI<1), 1, 0))
+  # pull out just those variables with an assocation
+  sig <- filter(fix_df, sig==1)%>%
+    dplyr::select(-sig)
+  print(fix_df)
+  print(sig)
+  
+  if (i==1){
+    tmp_1 <- tmp
+    fix_df1 <- fix_df
+    sig_1 <- sig
+  } else
+  { 
+    tmp_2 <- tmp
+    fix_df2 <- fix_df
+    sig_2 <- sig
+    }
+  
+  
+}
+
+```
+
+
+## Trace plots
+
+For the important variables
+
+```{r}
+library(bayesplot)
+posterior <- as.matrix(m1)
+sig_1$Variable <- if_else(sig_1$Variable=="main_mes_temp0.61",
+                          paste("bsp_", sig_1$Variable, sep=""),
+                          paste("b_", sig_1$Variable, sep=""))
+var <- sig_1$Variable
+
+for (i in 1:length(var)){
+
+p <- mcmc_trace(posterior,
+           pars = var[i],
+           facet_args = list(ncol=1, strip.position="left"))
+  
+print(p)
+}
+
+```
+
+## Posterior distributions
+
+For the important variables
+
+```{r}
+
+
+
+plot_title <- ggtitle("Posterior distributions with medians and 95% credible intervals")
+mcmc_areas(posterior,
+           pars = var,
+           prob = 0.95) + plot_title
+
+
+```
+
+## Skeptical priors
+
+Check no major change in coefficents

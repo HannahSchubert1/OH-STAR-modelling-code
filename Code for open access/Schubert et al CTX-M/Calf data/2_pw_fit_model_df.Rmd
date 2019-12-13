@@ -1,0 +1,113 @@
+---
+title: "pw fit model"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+# Introduction
+
+The univariable screening has been performed in another document. In this document, we will fit the multivariable model. 
+
+```{r include=FALSE}
+rm(list = ls())
+library(tidyverse)
+library(readxl) 
+library(visdat)
+library(multcomp)
+library(lme4)
+library(lmerTest)
+library(arm)
+
+
+```
+
+
+Load dataframe (available at request via NERC open access)
+
+Perform the following cleaning:
+o	Removal of zero plain counts
+o	Scale and centre numerical variables
+o	Selected only relevant antibiotic usage variables
+o	Remove variables with too few or too many levels
+o	Make the dependent variable an integer
+
+
+# Multivariable models
+
+Backwards stepwise procedure.
+
+All of the variables enter the model. At each stage the variable with the highest p value is removed, until only those with a p<0.05 remain in the model.
+
+
+```{r}
+
+mv_1 <- glmer(ctx_m ~ s_temp + f_trough_clean + f_nsaiddiarr + f_poultry +ceph_1
++ s_cefq_dct_6m +s_fram_dct_6m  + 
+                (1|farm), data=df_with_na, family = binomial)
+
+summary(mv_1)
+
+```
+
+Remove ceph_1
+
+```{r}
+
+mv_2 <- glmer(ctx_m ~ s_temp + f_trough_clean + f_nsaiddiarr + f_poultry 
++ s_cefq_dct_6m +s_fram_dct_6m  + 
+                (1|farm), data=df_with_na, family = binomial)
+
+
+summary(mv_2)
+```
+
+Remove nsaiddiarr
+
+```{r}
+
+
+mv_4 <-glmer(ctx_m ~ s_temp + f_trough_clean +  f_poultry 
++ s_cefq_dct_6m +s_fram_dct_6m  + 
+                (1|farm), data=df_with_na, family = binomial)
+summary(mv_4)
+
+
+
+```
+
+Remove poultry
+
+```{r}
+
+
+mv_5 <-glmer(ctx_m ~ s_temp + f_trough_clean 
++ s_cefq_dct_6m +s_fram_dct_6m  + 
+                (1|farm), data=df_with_na, family = binomial)
+
+
+summary(mv_5)
+
+
+
+```
+
+## DIC
+
+Check DIC for each model
+
+```{r}
+
+
+print(paste("First backwards model DIC=", extractDIC(mv_1), sep=""))
+print(paste("Second backwards model DIC=", extractDIC(mv_2), sep=""))
+print(paste("Third backwards model DIC=", extractDIC(mv_4), sep=""))
+print(paste("Fourth backwards model DIC=", extractDIC(mv_5), sep=""))
+```
+
+
+Model checking will be performed in another document
+

@@ -1,0 +1,257 @@
+---
+title: "check endpoint models"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+rm(list = ls())
+library(tidyverse)
+library(visdat)
+library(readxl)
+
+```
+
+Load main data
+Scale numerical variables
+Read in models fitted in previous document
+
+# Introduction
+
+This document will perform checks on the individual heifer models.
+
+
+# Functions
+
+## Model output
+
+```{r include=FALSE}
+# function to create df of model output
+
+mod_output <- function(mod){
+
+m <- as.data.frame(coef(summary(mod)))
+m <- m%>%  mutate(var=rownames(m))
+m <-m%>%  mutate(Estimate=exp(Estimate))%>%
+  dplyr::rename(OR=Estimate,
+                p=`Pr(>|z|)`)
+
+con <- as.data.frame(confint(mod, method="Wald"))[-1,]%>%
+   dplyr:: rename(lwr=`2.5 %`, upr=`97.5 %`)%>%
+   mutate(lwr=exp(lwr), upr=exp(upr))
+
+ summary <- cbind(m, con)%>%
+   dplyr::select(var, OR, lwr, upr, p)%>%
+   mutate(p=round(p, digits=4))%>%
+   arrange(p)%>%
+   filter(!var=="(Intercept)")
+ 
+
+}
+
+
+```
+
+## AUC
+
+```{r}
+# create auc function
+
+auc_roc <- function(mod){
+  # calculates auc for a model ('mod') given the observations in the data
+  
+  # make predictions
+  predp <- predict(mod, type=c("response"))
+  
+  # get the actual responses in the data
+  roc_obj<- pROC::roc(slot(mod, 'resp')$y ~ predp)
+  
+  # calculate auc
+  pROC::auc(roc_obj)
+  }
+
+
+```
+
+# Summary for each model
+
+```{r}
+models= list(amox_farm, amox_farm_3m, amox_heif, tet_farm, tet_farm_3m, tet_heif, ceph_farm, ceph_farm_3m, ceph_heif)
+
+for (i in 1:length(models)){
+  
+  print(summary(models[[i]]))
+}
+
+
+```
+
+Note: all amox and ceph final models are the same.
+Tet farm and heifers both the same. 3 month model is different.
+
+```{r}
+amox_all <- amox_farm
+ceph_all <- ceph_farm
+tet_3m <- tet_farm_3m
+tet_12m <- tet_farm
+
+
+```
+
+
+# Output and AUC for each model
+
+```{r}
+models= list(amox_all, tet_12m, tet_3m, ceph_all)
+
+labels= list("amox_all", "tet_12m", "tet_3m", "ceph_all")
+
+for(i in 1:length(models)){
+
+m = mod_output(models[[i]])
+m = mutate(m, model=labels[[i]], auc=(auc_roc(models[[i]])))
+  
+if (i==1) {
+  all_mod <- m
+}  else {
+  all_mod <- rbind(all_mod, m)
+}
+  print(summary(models[[i]]))
+
+}
+
+
+```
+
+# Multicollinearity
+
+We will run each variable in turn and check for no 'significant' change in the resulting coefficients, based on whether the coefficients remain within the error bars of the other models.
+
+## Amoxicillin
+
+```{r}
+library(arm)
+
+# run each model
+mv_1 <-glmer(amoxR ~ code+(1|farm), data=df, family=binomial)
+
+mv_2 <- glmer(amoxR ~ run_by +(1|farm), data=df, family=binomial)
+
+mv_3 <- glmer(amoxR ~ code+run_by +(1|farm), data=df, family=binomial)
+
+
+models= list(mv_1, mv_2, mv_3)
+
+# create df of all mod output
+
+for (i in 1:length(models)) {
+ 
+    
+    mv <-  mod_output(models[[i]])%>%
+      mutate(model=paste("mv", i, sep=""))
+     
+      if  (i==1)
+      { mv_all <- mv
+     
+          } else {
+                    mv_all <- rbind(mv, mv_all)
+          }
+     }
+  
+ 
+# graph of coefficients for each model spec and error bars
+ mv <- mv_all
+p <- ggplot(data=mv, aes(x=model, y=OR, group=var)) +
+  geom_line(aes(color=var), size=2)+
+  geom_point()+
+  geom_errorbar(aes(ymin=lwr, ymax=upr), width=.2,
+                 position=position_dodge(0.05))
+  #geom_vline(xintercept = 4, color="yellow", width=1.5)
+
+p 
+
+```
+
+## Tetracycline 3m
+
+
+```{r}
+library(arm)
+mv_1 <-glmer(tetR ~ run_by+temp_3m+farm_tetR_pc_ex_3m+(1|farm), data=df, family=binomial)
+
+mv_2 <- glmer(tetR ~ code+temp_3m+farm_tetR_pc_ex_3m+(1|farm), data=df, family=binomial)
+
+mv_3 <- glmer(tetR ~ code+run_by+farm_tetR_pc_ex_3m+(1|farm), data=df, family=binomial)
+
+mv_4 <- glmer(tetR ~ code+run_by+temp_3m+(1|farm), data=df, family=binomial)
+
+models= list(mv_1, mv_2, mv_3, mv_4)
+
+for (i in 1:length(models)) {
+ 
+    
+    mv <-  mod_output(models[[i]])%>%
+      mutate(model=paste("mv", i, sep=""))
+     
+      if  (i==1)
+      { mv_all <- mv
+     
+          } else {
+                    mv_all <- rbind(mv, mv_all)
+          }
+     }
+  
+ 
+ mv <- mv_all
+p <- ggplot(data=mv, aes(x=model, y=OR, group=var)) +
+  geom_line(aes(color=var), size=2)+
+  geom_point()+
+  geom_errorbar(aes(ymin=lwr, ymax=upr), width=.2,
+                 position=position_dodge(0.05))
+  #geom_vline(xintercept = 4, color="yellow", width=1.5)
+
+p 
+
+```
+
+## Tetracycline all
+```{r}
+library(arm)
+mv_1 <-glmer(tetR ~ code+total_mg_pcu+(1|farm), data=df, family=binomial)
+
+mv_2 <- glmer(tetR ~ run_by+total_mg_pcu+(1|farm), data=df, family=binomial)
+
+mv_3 <- glmer(tetR ~ run_by+code+(1|farm), data=df, family=binomial)
+
+models= list(mv_1, mv_2, mv_3)
+
+for (i in 1:length(models)) {
+ 
+    
+    mv <-  mod_output(models[[i]])%>%
+      mutate(model=paste("mv", i, sep=""))
+     
+      if  (i==1)
+      { mv_all <- mv
+     
+          } else {
+                    mv_all <- rbind(mv, mv_all)
+          }
+     }
+  
+ 
+ mv <- mv_all
+p <- ggplot(data=mv, aes(x=model, y=OR, group=var)) +
+  geom_line(aes(color=var), size=2)+
+  geom_point()+
+  geom_errorbar(aes(ymin=lwr, ymax=upr), width=.2,
+                 position=position_dodge(0.05))
+  #geom_vline(xintercept = 4, color="yellow", width=1.5)
+
+p 
+
+```
+

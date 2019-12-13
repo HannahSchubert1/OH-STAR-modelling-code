@@ -1,0 +1,123 @@
+---
+title: "ampc fit model"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+The univariable screening has been performed in another document. In this document, we will fit the multivariable model. 
+
+```{r include=FALSE}
+rm(list = ls())
+library(tidyverse)
+library(readxl) 
+library(visdat)
+library(multcomp)
+library(lme4)
+library(lmerTest)
+library(arm)
+
+
+```
+
+Load dataframe (available at request via NERC open access)
+
+Perform the following cleaning:
+o	Removal of zero plain counts
+o	Scale and centre numerical variables
+o	Selected only relevant variables
+o	Remove variables with too few or too many levels
+o	Make the dependent variable an integer
+
+
+# Multivariable models
+
+Backwards stepwise procedure.
+
+All of the variables identified from the univariable analysis as important enter the model. At each stage the variable with the highest p value is removed, until only those with a p<0.05 remain in the model.
+
+
+```{r}
+ mv_1 <- glmer(amp_c ~ co_amox+ total_mg_pcu+ s_housed_outdoor+f_pattern+  footpath+preweaned_heifer+adult+weaned_heifer+f_pneum_vacc+(1|farm), data=df, family=binomial)
+
+summary(mv_1)
+
+```
+
+Remove footpath
+```{r}
+ mv_2 <- glmer(amp_c ~ co_amox+ total_mg_pcu+ s_housed_outdoor+f_pattern+  preweaned_heifer+adult+weaned_heifer+f_pneum_vacc+(1|farm), data=df, family=binomial)
+
+summary(mv_2)
+
+
+
+```
+
+Remove weaned heifer
+
+```{r}
+ mv_3 <- glmer(amp_c ~ co_amox+ total_mg_pcu+ s_housed_outdoor+f_pattern+  preweaned_heifer+adult+f_pneum_vacc+(1|farm), data=df, family=binomial)
+summary(mv_3)
+
+
+
+```
+
+Remove adult
+
+```{r}
+ mv_4 <- glmer(amp_c ~ co_amox+ total_mg_pcu+ s_housed_outdoor+f_pattern+  preweaned_heifer+
+                 f_pneum_vacc+(1|farm), data=df, family=binomial)
+
+
+summary(mv_4)
+
+
+```
+
+Remove total amu
+
+```{r}
+ mv_5 <- glmer(amp_c ~ co_amox+ s_housed_outdoor+f_pattern+  preweaned_heifer+
+                 f_pneum_vacc+(1|farm), data=df, family=binomial)
+
+summary(mv_5)
+
+#forage_type_3 = maize
+
+```
+
+
+# DIC
+Look at DIC for first and last model
+
+```{r}
+print(paste("First backwards model DIC=", extractDIC(mv_1), sep=""))
+print(paste("Final backwards model DIC=", extractDIC(mv_5), sep=""))
+
+```
+
+# Table of key values from final model
+
+```{r}
+
+
+mv <- as.data.frame(coef(summary(mv_5)))[-1,]
+  
+      mv <- mutate(mv, var=rownames(mv),
+                 #auc=auc_roc(mv_5), 
+                 dic=extractDIC(mv_5))%>%
+      dplyr::rename(OR=Estimate, p=`Pr(>|z|)`, se=`Std. Error`, z_value=`z value`)%>%
+        mutate(z_value=NULL, lwr=OR-2*se, upr=OR+2*se)%>%
+        mutate_at(vars(OR, lwr, upr, se), exp)%>%
+        dplyr::select(var, everything())
+
+print(mv)
+
+```
+
+Model checking to be done in a different document.

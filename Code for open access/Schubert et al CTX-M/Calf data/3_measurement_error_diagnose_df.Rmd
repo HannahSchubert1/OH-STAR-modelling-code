@@ -1,0 +1,269 @@
+---
+title: "measurement error"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+# Introduction
+
+This document will build the model taking into account the measurement error observed with CTX-M at different plain counts as well as model checking and diagnostics.
+
+
+```{r include=FALSE}
+rm(list = ls())
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(arm)
+library(caret)
+library(e1071)
+```
+
+Load dataframe (available at request via NERC open access)
+
+Perform the following cleaning:
+o	Removal of zero plain counts
+o	Scale and centre numerical variables EXCEPT plain_undiluted
+o	Selected only relevant variables
+o	Remove variables with too few or too many levels
+o	Make the dependent variable an integer
+
+
+# Sensitivity of CTXM test
+
+This is the formula we will use to determine sensitivity
+
+k= plain count
+q= min prevalence we wish to detect
+
+$$
+s = 1-(1-q)^k
+$$
+
+
+## Custom link function
+
+A custom link function was used which equates the conditional probability of the true CTX-M status $P(Y^{true}=1|X)$ to the conditional probability of the observed CTX-M status, $P(Y^{obs}=1|X)$ for a given sensitivity (`s`) and specificity (`e`). This link function was original stated in this paper: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6346030/ and adapted to allow the sensitivity and specificity to be added as a vector and used in a glmer model, following the example given here: https://rpubs.com/bbolker/logregexp. 
+
+```{r, echo=T}
+logitse <- function(s=1, e=1)
+  {
+
+  linkfun <- function(mu) qlogis((mu+e-1)/(s+e-1)) 
+  
+  linkinv <- function(eta) plogis(eta) * (s+e-1) + 1 - e
+
+  logit_mu_eta <- function(eta) {
+        ifelse(abs(eta)>30,.Machine$double.eps,
+               exp(eta)/(1+exp(eta))^2)
+    }
+  
+  mu.eta <- function(eta) (s + e - 1) *logit_mu_eta(eta)
+  
+  valideta <- function(eta) TRUE
+
+  link <- paste("logitse(",deparse(substitute(s)),",", 
+                deparse(substitute(e)), ")", sep="") 
+  
+  structure(list(linkfun = linkfun, 
+                 linkinv = linkinv,
+                 mu.eta = mu.eta, 
+                 logit_mu_eta = logit_mu_eta, 
+                 valideta = valideta, 
+                 name = link),
+            class = "link-glm")
+}
+```
+
+## Converging the model
+
+With this type of link function the GLM becomes harder to converge as we decrease the minimum observable prevalence (`q`), so we use a warm-start method to converge the model. i.e. we use the value of $\mu$ of a converged model as a starting point for the converging a model with a lower `q`. 
+We will finish with a q of 0.01 for reporting in the papers, ie a minimum detectable prevalence of 1%.
+
+
+```{r}
+# Values of prevalence to try
+create_s_col <- function(df, q){
+  # Creates a column called 'sensitivity' in 'df'
+  # which is based on a supplied min prevalence 'q'
+  dplyr::mutate(df, fnr=(1-q)^plain_undiluted, 
+                sensitivity = 1-fnr)
+  
+}
+
+
+qmax <- 0.5
+qmin <- 0.01
+N <- 15
+qs <-10^seq(log10(qmax), log10(qmin), length.out=N)
+
+# list to keep models (add one because the first will be with normal link fn)
+models <- vector(mode="list", length=N+1)
+
+# formula
+form <- 'ctx_m ~ s_temp + f_trough_clean  + s_cefq_dct_6m +s_fram_dct_6m  +(1|farm)'
+
+# First model with no warm start and normal link function
+df <- create_s_col(df_all, qs[[1]])
+models[[1]] <- glmer(form, data=df, family = binomial)
+
+# Run the remaining qs:
+for(i in 2:length(models)){
+  #print(qs[[i-1]])
+  
+  # create new dataframe
+  df <- create_s_col(df_all, q=qs[[i-1]])
+  
+  # run model
+  tryCatch(
+    {
+      # get previous converged mu
+      mu_start <- slot(models[[i-1]], 'resp')$mu
+      #print(mu_start[1:5])
+      
+      models[[i]] <- glmer(formula=form, 
+                       data=df, 
+                       family=binomial(logitse(df$sensitivity,1)),
+                       mustart=mu_start)          
+    },
+    error = function(e){
+      # put the error message in place of the model.
+      #models[[i]] <- as.character(e)
+      print(e)
+  }
+  )
+  
+}
+
+print(models)
+```
+
+## Model results vs q
+
+```{r}
+
+# create function to produce auc 
+auc_roc <- function(mod){
+  # calculates auc for a model ('mod') given the observations in the data
+  
+  # make predictions
+  predp <- predict(mod, type=c("response"))
+  
+  # get the actual responses in the data
+  roc_obj<- pROC::roc(slot(mod, 'resp')$y ~ predp)
+  
+  # calculate auc
+  pROC::auc(roc_obj)
+  }
+
+```
+
+```{r}
+# Create a dataframe of results. 
+# The first result had the normal link function, so q = 1
+results <- broom::tidy(models[[1]])
+results$q <- 1
+results$auc <- auc_roc(models[[1]])
+results$aic <- summary(models[[1]])$AIC['AIC']
+
+# now loop through all the other models and 
+
+for(i in 2:length(models)){
+  tryCatch(
+    {
+      mod <- models[[i]]
+      mod_df <- broom::tidy(mod)
+      mod_df$q <- qs[[i-1]] 
+      mod_df$auc <- auc_roc(mod)
+      mod_df$aic <- summary(mod)$AIC['AIC']
+      mod_df$lwr <- mod_df$estimate-2*mod_df$std.error
+      mod_df$upr <- mod_df$estimate+2*mod_df$std.error
+      
+      results <- dplyr::bind_rows(results, mod_df)
+    }, 
+    error = function(e){NA}
+  )
+}
+
+
+##create dataframe of just the 1% prev results
+
+mod_output <- filter(results, q==0.01)%>%
+  mutate_at(vars(lwr, upr, estimate, std.error), exp)
+```
+
+# Diagnostics
+
+## AUC
+
+```{r}
+
+print(paste("AUC of final model=", mod_output[1,8], sep=""))
+
+```
+
+## Multicollinearity
+
+Remove each variable in turn and check no major changes in the others
+```{r}
+# run each model each with one variable missing
+
+mv_1 <-glmer(ctx_m ~ f_trough_clean  
++ s_cefq_dct_6m +s_fram_dct_6m  +
+                (1|farm), data=df_all, family = binomial)
+
+mv_2 <-glmer(ctx_m ~ s_temp 
++ s_cefq_dct_6m +s_fram_dct_6m  +
+                (1|farm), data=df_all, family = binomial)
+
+mv_3 <-glmer(ctx_m ~ s_temp + f_trough_clean  
+ +s_fram_dct_6m  +
+                (1|farm), data=df_all, family = binomial)
+
+mv_4 <-glmer(ctx_m ~ s_temp + f_trough_clean  
++ s_cefq_dct_6m +
+                (1|farm), data=df_all, family = binomial)
+
+models= list(mv_1, mv_2, mv_3, mv_4, mv_5)
+
+# create df of output from all above models
+
+for (i in 1:length(models)) {
+ 
+    
+     mv <- as.data.frame(coef(summary(models[[i]])))[-1,]
+  
+      mv <- mutate(mv, var=rownames(mv), model=paste("mv_", i, sep=""),
+                 #auc=auc_roc(models[[i]]), 
+                 dic=extractDIC(models[[i]]))%>%
+      dplyr::rename(OR=Estimate, p=`Pr(>|z|)`, se=`Std. Error`, z_value=`z value`)%>%
+        mutate(z_value=NULL, lwr=OR-2*se, upr=OR+2*se)%>%
+        mutate_at(vars(OR, lwr, upr, se), exp)
+
+    
+     
+      if  (i==1)
+      { mv_all <- mv
+     
+          } else {
+                    mv_all <- rbind(mv, mv_all)
+          }
+     }
+  
+# create graph with coefficients of each model and error bars 
+ mv <- mv_all
+p <- ggplot(data=mv, aes(x=model, y=OR, group=var)) +
+  geom_line(aes(color=var), size=2)+
+  geom_point()+
+  geom_errorbar(aes(ymin=lwr, ymax=upr), width=.2,
+                 position=position_dodge(0.05))
+  #geom_vline(xintercept = 4, color="yellow", width=1.5)
+
+p 
+
+```
+
+No coefficient significantly changes with the removal of a variable.

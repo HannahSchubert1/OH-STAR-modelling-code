@@ -1,0 +1,89 @@
+---
+title: "Untitled"
+author: "Rob Arbon"
+date: "06/09/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(kableExtra)
+library(brms)
+```
+
+Read in saved model
+
+Create df of results
+
+```{r}
+fix_df <- data.frame(fixef(mod))
+fix_df$term <- row.names(fix_df)
+
+fix_df <- fix_df %>%
+  select(term, everything()) %>%
+  arrange(desc(abs(Estimate))) %>%
+  filter(!grepl('Intercept', term)) %>%
+  mutate(term=gsub('reg_|main_', '', term))
+head(fix_df, 20)
+```
+
+Analyse marginal effects
+
+```{r}
+marginal_effects(x=mod, effects=c('total_mg_pcu',
+                                  'ceph_3_4', 
+                                  'ceph_1',
+                                  'animals_sampled',
+                                  's_housed_outdoor', 
+                                  's_temp', 
+                                  'f_fram_dct', 
+                                  'f_foragetype_3', 
+                                  'f_salmvacc', 
+                                  's_rain', 
+                                  'f_ceph_dct', 
+                                  'f_foragetype_6'))
+
+```
+
+Create output results
+
+
+```{r}
+reg_effs <- as.character(mod$formula$pforms$reg)[[3]]
+reg_effs <- gsub('\n| ', '', reg_effs)
+reg_effs <- str_split(string=reg_effs, pattern='\\+')[[1]]
+
+main_effs <- as.character(mod$formula$pforms$main)[[3]]
+main_effs <- gsub('\n| ', '', main_effs)
+main_effs <- str_split(string=main_effs, pattern='\\+')[[1]]
+
+
+fix_df$effect <- NA
+
+for( i  in 1:dim(fix_df)[1]){
+  
+  idx <- str_match(string=fix_df[i,'term'], pattern=reg_effs)
+  eff <- reg_effs[!is.na(idx)]
+  if(length(eff)>0){
+    fix_df[i, 'effect'] <- eff  
+  }else{
+    fix_df[i, 'effect'] <- fix_df[i,'term']
+  }
+  
+  # print(c(fix_df[i,'term'], reg_effs[!is.na(idx)]))
+}
+fix_df <- select(fix_df, effect, term,everything())
+```
+
+```{r}
+results <- fix_df %>%
+  group_by(effect) %>%
+  mutate(ave_effect=mean(Estimate), 
+         is_main=effect %in% main_effs) %>%
+  arrange(desc(is_main), desc(abs(ave_effect)), desc(Estimate)) %>%
+  select(-c(Est.Error, ave_effect, is_main)) %>%
+  rename(Level=term, Effect=effect, Lower_Bound=Q2.5, Upper_Bound=Q97.5) %>%
+  mutate_if(is.numeric, ~sprintf("%4.3f",.x))
+```
+

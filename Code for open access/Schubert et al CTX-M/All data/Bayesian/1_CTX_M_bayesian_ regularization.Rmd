@@ -1,0 +1,113 @@
+---
+title: "CTX_M regularization"
+author: "Rob Arbon"
+date: "20/08/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+This document will fit a model using Bayesian regularisation.
+
+```{r}
+library(tidyverse)
+```
+
+Load dataframe (available at request via NERC open access)
+
+Perform the following cleaning:
+o	Removal of zero plain counts
+o	Scale and centre numerical variables
+o	Selected only relevant antibiotic usage variables
+o	Remove variables with too few or too many levels
+o	Make the dependent variable an integer
+
+# Bayesian lasso
+
+```{r}
+# Label variables into categories 
+main_vars <- c('total_mg_pcu', 'ceph_3_4', 'ceph_1')
+re <- 'farm'
+dv <- 'ctx_m'
+all_named_vars <- c(dv, re, main_vars)
+
+# sort variables for ease
+df <- dplyr::select(df, all_named_vars, dplyr::everything())
+
+
+# Make a formula
+names_classes <- sapply(names(df), function(x) class(df[[x]]))
+```
+
+Reference used for the following:
+
+Carvalho CM, Polson NG, Scott JG, The horseshoe estimator for sparse signals, Biometrika, 2010; 97:465-480
+
+
+```{r}
+# Make formula for horseshoe variables
+horse_form <- ""
+for (i in 1:length(names_classes)){
+  x <- names(names_classes)[i]
+  # don't add random effects, dependent variables or the main testing variables. 
+  if (!x %in% c(re, dv, main_vars)){
+    if ('ordered' %in% names_classes[x][[1]]){
+      
+      horse_form <- paste(horse_form, sprintf('%s', x), sep='+')
+    }else{
+      horse_form <- paste(horse_form, sprintf('%s', x), sep='+')
+    }    
+  }
+}
+horse_form <- substring(horse_form, 2)
+```
+
+## Fit model
+
+```{r}
+library(brms)
+
+# This follows the example https://discourse.mc-stan.org/t/horseshoe-prior-on-subset-of-predictors/8140/4
+# Write a maximally explicit formula: dependent_var ~ main_vars + regularized_vars + random effect
+
+form <- bf(ctx_m ~  main + reg + rand, nl=T)
+form <- form + lf(rand ~ 0 + (1|farm), cmc=F, center=F)
+form <- form + lf("main ~ total_mg_pcu+ceph_3_4+ceph_1",cmc=F)
+form <- form + lf(paste("reg ~ 0 + ",horse_form), cmc=F)
+
+# check which priors we need
+get_prior(form, data=df, family=bernoulli)
+
+# define the priors 
+priors <- c(prior(student_t(3, 0, 10), class="b", nlpar="main", coef='Intercept'),
+            prior(normal(0, 5), class="b", nlpar="main"),
+            prior(horseshoe(1), class="b", nlpar="reg"))
+
+# Run model
+bmod <- brm(formula = form,
+            data=df,
+            family=bernoulli,
+            prior=priors,
+            warmup = 1000, iter = 2000, chains = 4, seed=42, cores=4, control = list(adapt_delta = 0.98))
+```
+
+```{r}
+mod <- bmod
+
+fix_df <- data.frame(fixef(mod))
+fix_df$term <- row.names(fix_df)
+
+fix_df <- fix_df %>%
+  dplyr::select(term, everything()) %>%
+  arrange(desc(abs(Estimate))) %>%
+  filter(!grepl('Intercept', term)) %>%
+  mutate(term=gsub('reg_|main_', '', term))%>%
+  mutate_at(vars(-term), exp)
+head(fix_df, 20)
+
+```
+

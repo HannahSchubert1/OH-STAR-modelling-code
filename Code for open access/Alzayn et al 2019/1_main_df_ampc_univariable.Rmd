@@ -1,0 +1,139 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+##Introduction
+
+This document will go through the stages of univariable screening.
+
+The variable selection method used in this document is considered to be the 'traditional veterinary epidemiology' method as is used in the majority of similar studies. Further work will be done using more modern and robust variable selection methods.
+
+Previous exploratory analysis has revealed that additional random effects for the time element or the sample type are not required or justified.
+
+
+```{r include=FALSE}
+rm(list = ls())
+library(tidyverse)
+library(readxl) 
+library(visdat)
+library(multcomp)
+library(lme4)
+library(lmerTest)
+library(arm)
+
+
+```
+
+Load dataframe (available at request via NERC open access)
+
+Perform the following cleaning:
+o	Removal of zero plain counts
+o	Scale and centre numerical variables
+o	Selected only relevant antibiotic usage variables
+o	Remove variables with too few or too many levels
+o	Make the dependent variable an integer
+
+
+##Variable screening
+
+Univariable logistic regression analysis of each variable, with farm added as a random effect.
+
+Adjust the p values to represent a false detection rate to account for the large number of variables and therefore liklihood of low ps occuring by chance.
+
+Create a table with every variable with its OR, CI and adjusted p.
+
+```{r include=FALSE}
+
+vars <- names(df)
+# loop through all variables to be tested
+
+for(i in 7:length(vars))
+{
+# use a tryCatch so the loop doesn't stop if an error occurs on one variable
+  tryTest = tryCatch(
+
+  {
+    # run the model
+    uni_model <- glmer(amp_c ~ get(vars[i]) + (1 | farm), data=df, family=binomial)
+    # create a summary df
+p <- coef(summary(uni_model))[-1,4]
+summary <- as.data.frame(coef(summary(uni_model)))[-1, ]
+summary <- mutate(summary, Estimate=exp(Estimate),
+                  `Std. Error`=exp(`Std. Error`))%>%
+  dplyr::rename(OR=Estimate,
+         st.error=`Std. Error`,
+         z_value=`z value`,
+         p=`Pr(>|z|)`)
+rownames(summary)[1] <- vars[i]
+
+con <- as.data.frame(confint(uni_model, method="Wald"))[3,]%>%
+  dplyr:: rename(lwr=`2.5 %`, upr=`97.5 %`)%>%
+  mutate(lwr=exp(lwr), upr=exp(upr))
+
+summary <- cbind(summary, con)
+
+# if it's the first variable being tested, create a new df, otherwise bind with the other variables
+if (i==7){
+  all_uni_analysis <- summary
+} else {
+  all_uni_analysis <- rbind(summary, all_uni_analysis)
+}
+
+
+  },
+  warning = function(w) {
+
+    print('this is warning')
+    print(vars[i])
+    return(print(paste(vars[i],"p=",p)))
+  },
+  error = function(e) {
+    print('this is error')
+    print(e)
+    return('return string from error')
+  },
+  finally = {}
+)
+
+print(tryTest)
+
+}
+
+```
+
+
+
+Adjust the p values using the false detection rate method
+
+```{r}
+
+# #Adjusted p values
+ 
+adjusted_p <- as.data.frame(p.adjust(all_uni_analysis$p, method = "fdr"))
+
+# add onto our df created above
+
+all_uni_analysis <- cbind(all_uni_analysis, adjusted_p)
+all_uni_analysis <- dplyr::rename(all_uni_analysis, p_adjusted=`p.adjust(all_uni_analysis$p, method = "fdr")`)%>%
+  mutate(var=rownames(all_uni_analysis))%>%
+  dplyr::select(var, everything())
+
+```
+
+From all of the univariable analysis, we wish to select variables with a p<=0.25
+
+```{r}
+to_enter_model <- filter(all_uni_analysis, p_adjusted<=0.25)
+
+# print the variables to enter the model
+
+print(to_enter_model$var)
+
+```
+

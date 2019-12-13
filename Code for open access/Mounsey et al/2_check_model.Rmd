@@ -1,0 +1,115 @@
+---
+title: "check_model"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+
+```{r include=FALSE}
+rm(list = ls())
+
+library(tidyverse)
+library(kableExtra)
+library(brms)
+library(tidybayes)
+
+
+```
+
+# Introduction
+
+This document will perform checks on the previously fitted model.
+
+Load the models saved from the previous document.
+
+# Model interpretation
+
+Check for any warning messages or divergence issues
+
+```{r}
+
+summary(mod)
+```
+
+## Table of values from the model
+
+This table shows values from the model with the variables ordered by effect size. 
+
+```{r}
+
+library(bayestestR)
+
+mod_df <- function(mod){
+
+# coefficients
+fix_df <- data.frame(fixef(mod))
+fix_df$term <- row.names(fix_df)
+
+# Effective sample size
+tmp <- effective_sample(mod)%>%
+  mutate(Parameter=str_remove(Parameter, "b_"))%>%
+  dplyr::rename(term=Parameter, Eff.sample_size=ESS)%>%
+  filter(!term=="main_intercept")
+
+# merge
+fix_df <- right_join(fix_df, tmp, by=c("term"))
+
+# tidy up
+fix_df <- fix_df %>%
+  dplyr::select(term, everything(), -Est.Error) %>%
+  arrange(desc(abs(Estimate))) %>%
+  filter(!grepl('Intercept', term)) %>%
+  mutate_at(vars(-term, -Eff.sample_size), exp)%>%
+  dplyr::rename(Variable=term, OR=Estimate, Lwr_CI=Q2.5, Upr_CI=Q97.5)%>%
+  mutate(sig=if_else((Lwr_CI>1&Upr_CI>1)|(Lwr_CI<1&Upr_CI<1), 1, 0))
+
+}
+mod_df(mod)
+```
+
+# Diagnostics
+
+## Convergence
+
+Check Rhat and examine trace plots below.
+
+## Trace and density plots
+
+For the important variables
+
+```{r}
+plot(mod, pars=c("main_fq", "reg_s_percentdryoff"), combo = c("dens","trace"))
+#summary(mod)
+
+
+library(bayesplot)
+
+posterior <- as.matrix(mod)
+
+plot_title <- ggtitle("Posterior distributions",
+                      "with medians and 95% intervals")
+mcmc_areas(posterior,
+           pars = c("b_main_fq", "b_reg_s_percentdryoff"),
+           prob = 0.95) + plot_title
+
+```
+
+
+## Marginal effects
+
+Plot the marginal effects of the two most important variables.
+
+
+```{r}
+marginal_effects(mod, effects=c("fq",
+                                "s_percentdryoff"), par=FALSE)
+
+```
+
+
+## Skeptical priors
+
+Read in model fitted in previous document and check for any changes in coefficients.
